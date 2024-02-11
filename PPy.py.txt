@@ -1,0 +1,104 @@
+from pulp import *
+
+def k_tsp_mtz_encoding(n, k, cost_matrix):
+    assert 1 <= k < n
+    assert len(cost_matrix) == n, f'Cost matrix is not {n}x{n}'
+    assert all(len(cj) == n for cj in cost_matrix), f'Cost matrix is not {n}x{n}'
+
+    prob = LpProblem('kTSP', LpMinimize)
+
+    # Decision variables
+    x = LpVariable.dicts("x", [(i, j, l) for i in range(n) for j in range(n) for l in range(k)], cat='Binary')
+    u = LpVariable.dicts("u", [(i, l) for i in range(n) for l in range(k)], lowBound=0, upBound=n-1, cat='Continuous')
+
+    # Additional binary variables to enforce that each salesperson's tour starts from vertex 0
+    y = LpVariable.dicts("y", [(l, i) for l in range(k) for i in range(n)], cat='Binary')
+
+    # Objective function
+    prob += lpSum([x[i, j, l] * (cost_matrix[i][j] if cost_matrix[i][j] is not None else 0) for i in range(n) for j in range(n) for l in range(k)])
+
+    # Degree Constraints
+    for i in range(n):
+        for l in range(k):
+            prob += lpSum(x[i, j, l] for j in range(n) if i != j) == 1
+            prob += lpSum(x[j, i, l] for j in range(n) if i != j) == 1
+
+    # Subtour Elimination Constraints
+    for l in range(k):
+        for i in range(1, n):
+            for j in range(1, n):
+                if i != j:
+                    prob += x[i, j, l] + x[j, i, l] - 1 <= u[i, l] + u[j, l]
+
+    # Ensure each city is visited exactly once across all tours
+    for j in range(1, n):
+        prob += lpSum(x[i, j, l] for i in range(n) for l in range(k)) == 1
+
+    # Additional constraints to enforce that each salesperson's tour starts from vertex 0
+    for l in range(k):
+        for i in range(n):
+            for j in range(1, n):
+                prob += x[i, j, l] - y[l, i] >= 0
+                prob += x[j, i, l] - y[l, i] >= 0
+
+    # Solve the problem
+    prob.solve()
+
+    # Extract tours from the solution
+    all_tours = []
+    for l in range(k):
+        tour = [0] # Start each tour at vertex 0
+        while len(tour) < n:
+            i = tour[-1]
+            next_cities = [j for j in range(n) if x[i, j, l].varValue is not None and x[i, j, l].varValue > 0.5 and j not in tour]
+            if not next_cities: # No more cities to visit
+                break
+            tour.append(next_cities[0])
+        all_tours.append(tour)
+
+    # Calculate the total tour cost
+    tour_cost = 0
+    for tour in all_tours:
+        for i in range(len(tour) - 1):
+            if cost_matrix[tour[i]][tour[i+1]] is not None:
+                tour_cost += cost_matrix[tour[i]][tour[i+1]]
+        # Add cost to return to starting city, if applicable
+        if cost_matrix[tour[-1]][0] is not None:
+            tour_cost += cost_matrix[tour[-1]][0]
+
+    return all_tours, tour_cost
+#### TEST 5
+
+from random import uniform, randint
+
+def create_cost(n):
+    return [ [uniform(0, 5) if i != j else None for j in range(n)] for i in range(n)]
+
+for trial in range(5):
+    print(f'Trial # {trial}')
+    n = randint(5, 11)
+    k = randint(2, n//2)
+    print(f' n= {n}, k={k}')
+    cost_matrix = create_cost(n)
+    print('cost_matrix = ')
+    print(cost_matrix)
+    all_tours = k_tsp_mtz_encoding(n, k, cost_matrix)
+    print(f'Your code returned tours: {all_tours}')
+    assert len(all_tours) == k, f'k={k} must yield two tours -- your code returns {len(all_tours)} tours instead'
+
+    tour_cost = 0
+    for tour in all_tours:
+        assert tour[0] == 0, 'Each salesperson tour must start from vertex 0'
+        i = 0
+        for j in tour[1:]:
+            tour_cost += cost_matrix[i][j]
+            i = j
+        tour_cost += cost_matrix[i][0]
+
+    print(f'Tour cost obtained by your code: {tour_cost}')
+    #assert abs(tour_cost - 6) <= 0.001, f'Expected tour cost is 6, your code returned {tour_cost}'
+    for i in range(1, n):
+        is_in_tour = [ 1 if i in tour else 0 for tour in all_tours]
+        assert sum(is_in_tour) == 1, f' vertex {i} is in {sum(is_in_tour)} tours -- this is incorrect'
+    print('------')
+
